@@ -4,6 +4,7 @@ import torch.optim as optim
 import numpy as np
 from sklearn.metrics import fbeta_score, confusion_matrix, recall_score, precision_score
 import time
+import matplotlib.pyplot as plt
 
 class TransformerModel(nn.Module):
     def __init__(self, input_dim, model_dim, nhead, num_encoder_layers, num_decoder_layers, dim_feedforward, dropout):
@@ -44,49 +45,63 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate, devi
     train_metrics = {}
     val_metrics = {}
     
+    cumulative_examples = 0
+    train_f2_scores = []
+    val_f2_scores = []
+    example_counts = []
+
     for epoch in range(num_epochs):
         epoch_start_time = time.time()
         model.train()
         running_loss = 0.0
-        all_targets = []
-        all_outputs = []
+        all_train_targets = []
+        all_train_outputs = []
+        
         for inputs, _ in train_loader:
-            inputs = inputs.to(device) 
-            optimizer.zero_grad()
+            inputs = inputs.to(device)
             inputs = inputs.unsqueeze(1)
+            optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, inputs.squeeze(1))
             loss.backward()
             optimizer.step()
             running_loss += loss.item() * inputs.size(0)
             
-            all_targets.extend(inputs.cpu().numpy())
-            all_outputs.extend(outputs.cpu().detach().numpy())
+            all_train_targets.extend(inputs.cpu().numpy())
+            all_train_outputs.extend(outputs.cpu().detach().numpy())
+            
+            # Track number of examples processed
+            cumulative_examples += inputs.size(0)
+            example_counts.append(cumulative_examples)
+            
+            # Calculate F2 score for training data
+            train_metrics = calculate_metrics(all_train_targets, all_train_outputs)
+            train_f2_scores.append(train_metrics['f2_score'])
         
         train_loss = running_loss / len(train_loader.dataset)
         train_losses.append(train_loss)
         
-        train_metrics = calculate_metrics(all_targets, all_outputs)
-        
         model.eval()
         val_loss = 0.0
-        all_targets = []
-        all_outputs = []
+        all_val_targets = []
+        all_val_outputs = []
         with torch.no_grad():
             for inputs, _ in val_loader:
-                inputs = inputs.to(device)  
+                inputs = inputs.to(device)
                 inputs = inputs.unsqueeze(1)
                 outputs = model(inputs)
                 loss = criterion(outputs, inputs.squeeze(1))
                 val_loss += loss.item() * inputs.size(0)
                 
-                all_targets.extend(inputs.cpu().numpy())
-                all_outputs.extend(outputs.cpu().detach().numpy())
+                all_val_targets.extend(inputs.cpu().numpy())
+                all_val_outputs.extend(outputs.cpu().detach().numpy())
         
         val_loss /= len(val_loader.dataset)
         val_losses.append(val_loss)
         
-        val_metrics = calculate_metrics(all_targets, all_outputs)
+        # Calculate F2 score for validation data
+        val_metrics = calculate_metrics(all_val_targets, all_val_outputs)
+        val_f2_scores.append(val_metrics['f2_score'])
         
         print(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
         epoch_end_time = time.time()
@@ -96,8 +111,19 @@ def train_model(model, train_loader, val_loader, num_epochs, learning_rate, devi
 
     end_time = time.time()
     print('The training process took:', format_time(end_time - start_time)) 
-    return train_losses, val_losses, train_metrics, val_metrics
 
+    # Plot the training and validation F2 score curves
+    plt.figure(figsize=(10, 5))
+    plt.plot(example_counts, train_f2_scores, label='Training F2 Score', color='r')
+    #plt.plot(example_counts, val_f2_scores, label='Validation F2 Score', color='g')
+    plt.xlabel('Number of Examples')
+    plt.ylabel('F2 Score')
+    plt.title('Training F2 Score Curve')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    return train_losses, val_losses, train_metrics, val_metrics
 def evaluate_model(model, test_loader, device):
     model.eval()
     test_loss = 0.0
